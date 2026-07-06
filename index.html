@@ -750,6 +750,29 @@ header.top h1 em{
   color:var(--ink-soft);
   margin-bottom:6px;
 }
+.label-pick-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+.label-pick{
+  font-family:'Libre Franklin', sans-serif;
+  font-weight:600;
+  font-size:13px;
+  padding:8px 14px;
+  border-radius:20px;
+  border:1px solid var(--line);
+  background:var(--paper-card);
+  color:var(--ink-soft);
+  cursor:pointer;
+  white-space:nowrap;
+}
+.label-pick.active{
+  background:var(--pine);
+  border-color:var(--pine);
+  color:#fff;
+}
+
 .field-label-row{
   display:flex;
   align-items:center;
@@ -1133,14 +1156,21 @@ header.top h1 em{
   gap:10px;
   padding:13px 2px;
   border-bottom:1px solid var(--line);
-  cursor:pointer;
 }
 .menu-list-item:last-child{border-bottom:none;}
+.menu-check{
+  width:19px;
+  height:19px;
+  accent-color:var(--pine);
+  flex-shrink:0;
+}
 .menu-list-text{
   display:flex;
   flex-direction:column;
   gap:2px;
   min-width:0;
+  flex:1;
+  cursor:pointer;
 }
 .menu-list-title{
   font-size:15px;
@@ -1155,6 +1185,43 @@ header.top h1 em{
   font-size:10.5px;
   color:var(--ink-soft);
 }
+
+.menu-group-row{
+  border:1px solid var(--line);
+  border-radius:10px;
+  margin-bottom:10px;
+  overflow:hidden;
+  background:var(--mustard-soft);
+}
+.menu-group-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+}
+.menu-group-name{
+  font-size:14px;
+  font-weight:700;
+  color:#7a5320;
+}
+.menu-group-actions{
+  display:flex;
+  gap:2px;
+}
+.menu-group-header .icon-btn-sm{color:#7a5320;}
+.menu-group-items{
+  list-style:none;
+  margin:0;
+  padding:0;
+  background:var(--paper-card);
+}
+.menu-group-item{
+  padding:11px 12px;
+  border-bottom:1px solid var(--line);
+}
+.menu-group-item:last-child{border-bottom:none;}
+.group-name-prompt{margin-bottom:4px;}
 
 .shop-list{
   list-style:none;
@@ -1293,10 +1360,17 @@ const SEASONS = [
   { id:'autumn-winter', label:'Autumn / Winter', chip:'❄️ Autumn/Winter' },
 ];
 
+const LABELS = [
+  { id:'carb', label:'Carb', chip:'🍞 Carb' },
+  { id:'protein', label:'Protein', chip:'🍗 Protein' },
+  { id:'vege', label:'Vege', chip:'🥦 Vege' },
+];
+
 let activeSeasonFilter = 'all';
 let cuisineAddMode = false;
 let cuisineNewValue = '';
 let activeCuisineFilter = 'all';
+let activeLabelFilter = 'all';
 let manageCuisineNewValue = '';
 let cuisineEditTarget = null;
 let cuisineEditValue = '';
@@ -1308,6 +1382,7 @@ let state = {
   checked: {},
   customCuisines: [],
   menuDays: {},
+  menuGroups: [],
 };
 let activeTab = 'breakfast';
 let editingId = null;
@@ -1322,6 +1397,7 @@ let formServings = 2;
 let formInstructions = '';
 let formCuisine = '';
 let formSeason = '';
+let formLabels = [];
 let formImage = null; // dataURL string, or null, while editing/creating
 let pasteText = '';
 let pasteError = null;
@@ -1342,6 +1418,11 @@ let backupBusy = false;
 let backupMessage = null;
 let pendingImportPayload = null;
 let pendingImportFilename = null;
+let menuCheckedIds = [];
+let groupNamePrompt = false;
+let groupNameValue = '';
+let renameGroupId = null;
+let renameGroupValue = '';
 let toastTimer = null;
 
 function showToast(msg){
@@ -1449,6 +1530,7 @@ async function loadData(){
       state.checked = parsed.checked || {};
       state.customCuisines = parsed.customCuisines || [];
       state.menuDays = parsed.menuDays || {};
+      state.menuGroups = parsed.menuGroups || [];
     }
   }catch(e){
     // no existing data yet
@@ -1516,6 +1598,7 @@ function filteredRecipesFor(cat){
   return recipesFor(cat).filter(r => {
     if(activeSeasonFilter !== 'all' && (r.season || '') !== activeSeasonFilter) return false;
     if(activeCuisineFilter !== 'all' && (r.cuisine || '') !== activeCuisineFilter) return false;
+    if(activeLabelFilter !== 'all' && !(r.labels || []).includes(activeLabelFilter)) return false;
     return true;
   });
 }
@@ -1579,7 +1662,7 @@ function render(){
   }
 
   const list = filteredRecipesFor(activeTab);
-  const filtersActive = activeSeasonFilter !== 'all' || activeCuisineFilter !== 'all';
+  const filtersActive = activeSeasonFilter !== 'all' || activeCuisineFilter !== 'all' || activeLabelFilter !== 'all';
   const cuisines = distinctCuisines();
 
   app.innerHTML = `
@@ -1600,6 +1683,7 @@ function render(){
       <div class="filter-bar">
         <button class="filter-chip ${activeSeasonFilter==='all'?'active':''}" data-season-filter="all">All</button>
         ${SEASONS.map(s => `<button class="filter-chip ${activeSeasonFilter===s.id?'active':''}" data-season-filter="${s.id}">${s.chip}</button>`).join('')}
+        ${LABELS.map(l => `<button class="filter-chip ${activeLabelFilter===l.id?'active':''}" data-label-filter="${l.id}">${l.chip}</button>`).join('')}
         ${cuisines.length ? `
           <select class="cuisine-filter-select" id="cuisine-filter-select">
             <option value="all">All cuisines</option>
@@ -1679,7 +1763,8 @@ function cardHTML(r){
   const selected = state.selection.includes(r.id);
   if(r.hasImage) ensureImage(r.id);
   const src = r.hasImage ? imageCache[r.id] : null;
-  const hasTags = (r.cuisine && r.cuisine.trim()) || r.season;
+  const recipeLabels = r.labels || [];
+  const hasTags = (r.cuisine && r.cuisine.trim()) || r.season || recipeLabels.length;
   return `
     <div class="recipe-card ${r.hasImage?'has-image':''}" data-open="${r.id}">
       ${r.hasImage ? `<img class="thumb" src="${src||''}" alt="">` : ''}
@@ -1694,6 +1779,10 @@ function cardHTML(r){
         </div>
         ${hasTags ? `
           <div class="card-tags">
+            ${recipeLabels.map(lid => {
+              const l = LABELS.find(x => x.id === lid);
+              return l ? `<span class="card-tag">${esc(l.chip)}</span>` : '';
+            }).join('')}
             ${r.cuisine && r.cuisine.trim() ? `<span class="card-tag">${esc(r.cuisine.trim())}</span>` : ''}
             ${r.season ? `<span class="card-tag">${esc(seasonChip(r.season))}</span>` : ''}
           </div>
@@ -1807,6 +1896,10 @@ function detailHTML(){
       <button class="icon-btn" id="btn-close">${icon('close')}</button>
     </div>
     <span class="tag-pill">${esc(cat.label)}</span>
+    ${(r.labels || []).map(lid => {
+      const l = LABELS.find(x => x.id === lid);
+      return l ? `<span class="tag-pill">${esc(l.chip)}</span>` : '';
+    }).join('')}
     ${r.cuisine && r.cuisine.trim() ? `<span class="tag-pill">${esc(r.cuisine.trim())}</span>` : ''}
     ${r.season ? `<span class="tag-pill">${esc(seasonChip(r.season))}</span>` : ''}
     ${r.hasImage && imageCache[r.id] ? `<img class="detail-image" src="${imageCache[r.id]}" alt="">` : ''}
@@ -1948,6 +2041,15 @@ function formHTML(){
       </div>
     </div>
 
+    <div class="field">
+      <label>Labels</label>
+      <div class="label-pick-row">
+        ${LABELS.map(l => `
+          <button type="button" class="label-pick ${formLabels.includes(l.id)?'active':''}" data-toggle-label="${l.id}">${esc(l.chip)}</button>
+        `).join('')}
+      </div>
+    </div>
+
     <div class="field photo-field">
       <label>Photo</label>
       <input type="file" accept="image/*" id="f-photo-input" style="display:none;">
@@ -2062,34 +2164,135 @@ function backupHTML(){
 }
 
 function menuHTML(){
-  const selected = state.selection.map(id => state.recipes.find(r => r.id === id)).filter(Boolean);
+  const selectedIds = new Set(state.selection);
+  const consumed = new Set();
+  const groups = [];
+  const survivingGroups = [];
+
+  state.menuGroups.forEach(g => {
+    const validIds = g.recipeIds.filter(id => selectedIds.has(id));
+    const recipes = validIds.map(id => state.recipes.find(r => r.id === id)).filter(Boolean);
+    if(recipes.length >= 2){
+      groups.push({ group: {...g, recipeIds: validIds}, recipes });
+      validIds.forEach(id => consumed.add(id));
+      survivingGroups.push({ id: g.id, name: g.name, recipeIds: validIds });
+    }
+  });
+  if(JSON.stringify(survivingGroups) !== JSON.stringify(state.menuGroups)){
+    state.menuGroups = survivingGroups;
+    saveData();
+  }
+
+  const ungrouped = [];
+  state.selection.forEach(id => {
+    if(consumed.has(id)) return;
+    const r = state.recipes.find(x => x.id === id);
+    if(r) ungrouped.push(r);
+  });
+
+  const checkedCount = menuCheckedIds.filter(id => selectedIds.has(id) && !consumed.has(id)).length;
+
   return `
     <div class="sheet-top">
       <h2>This week's menu</h2>
       <button class="icon-btn" id="btn-close">${icon('close')}</button>
     </div>
-    ${selected.length ? `
+    ${(groups.length === 0 && ungrouped.length === 0) ? `
+      <div class="shop-empty">
+        <p>Tap the + on any recipe to add it to this week's menu.</p>
+      </div>
+    ` : `
+      <p class="import-hint" style="margin:0 0 12px;">Tick 2 or more dishes below to group them into a meal — a main, a side, a protein, whatever makes sense this week.</p>
       <ul class="menu-list">
-        ${selected.map(r => {
+        ${groups.map(g => menuGroupRowHTML(g.group, g.recipes)).join('')}
+        ${ungrouped.map(r => menuRecipeRowHTML(r)).join('')}
+      </ul>
+      ${groupNamePrompt ? groupNamePromptHTML() : (checkedCount >= 2 ? `
+        <div class="sheet-actions">
+          <button class="btn primary" id="btn-start-group" style="width:100%;">Group ${checkedCount} selected into a meal</button>
+        </div>
+      ` : '')}
+    `}
+  `;
+}
+
+function labelEmojis(r){
+  return (r.labels || []).map(lid => {
+    const l = LABELS.find(x => x.id === lid);
+    return l ? l.chip.split(' ')[0] : '';
+  }).filter(Boolean).join(' ');
+}
+
+function menuRecipeRowHTML(r){
+  const cat = CATEGORIES.find(c => c.id === r.category);
+  const checked = menuCheckedIds.includes(r.id);
+  const emojis = labelEmojis(r);
+  return `
+    <li class="menu-list-item">
+      <input type="checkbox" class="menu-check" data-menu-check="${r.id}" ${checked?'checked':''}>
+      <div class="menu-list-text" data-open-menu-recipe="${r.id}">
+        <span class="menu-list-title">${esc(r.title)}</span>
+        <span class="menu-list-meta">${cat ? esc(cat.label) : ''}${emojis ? ' · '+esc(emojis) : ''}</span>
+      </div>
+      <button class="icon-btn-sm" data-remove-menu-item="${r.id}" type="button" title="Remove from menu">${icon('close')}</button>
+    </li>
+  `;
+}
+
+function groupNamePromptHTML(){
+  return `
+    <div class="group-name-prompt">
+      <p class="section-label" style="margin-top:14px;">Name this meal</p>
+      <div class="inline-add-row">
+        <input type="text" id="f-group-name" placeholder="e.g. Taco Night" value="${esc(groupNameValue)}">
+        <button class="inline-add-btn" id="btn-confirm-group" type="button">Group</button>
+        <button class="inline-cancel-btn" id="btn-cancel-group" type="button">${icon('close')}</button>
+      </div>
+    </div>
+  `;
+}
+
+function menuGroupRowHTML(g, recipes){
+  const isRenaming = renameGroupId === g.id;
+  const groupEmojis = Array.from(new Set(recipes.flatMap(r => (r.labels || []).map(lid => {
+    const l = LABELS.find(x => x.id === lid);
+    return l ? l.chip.split(' ')[0] : '';
+  })).filter(Boolean))).join(' ');
+  return `
+    <li class="menu-group-row">
+      <div class="menu-group-header">
+        ${isRenaming ? `
+          <input type="text" class="manage-rename-input" id="f-rename-group-input" value="${esc(renameGroupValue)}">
+          <button class="icon-btn-sm" data-confirm-rename-group="${g.id}" type="button" title="Save">${icon('check')}</button>
+          <button class="icon-btn-sm" id="btn-cancel-rename-group" type="button" title="Cancel">${icon('close')}</button>
+        ` : `
+          <span class="menu-group-name">🍽️ ${esc(g.name)}${groupEmojis ? ' '+esc(groupEmojis) : ''}</span>
+          <div class="menu-group-actions">
+            <button class="icon-btn-sm" data-edit-group="${g.id}" type="button" title="Rename">${icon('edit')}</button>
+            <button class="icon-btn-sm" data-ungroup="${g.id}" type="button" title="Ungroup">${icon('close')}</button>
+          </div>
+        `}
+      </div>
+      <ul class="menu-group-items">
+        ${recipes.map(r => {
           const cat = CATEGORIES.find(c => c.id === r.category);
+          const emojis = labelEmojis(r);
           return `
-            <li class="menu-list-item" data-open-menu-recipe="${r.id}">
-              <div class="menu-list-text">
+            <li class="menu-list-item menu-group-item">
+              <div class="menu-list-text" data-open-menu-recipe="${r.id}">
                 <span class="menu-list-title">${esc(r.title)}</span>
-                <span class="menu-list-meta">${cat ? esc(cat.label) : ''}</span>
+                <span class="menu-list-meta">${cat ? esc(cat.label) : ''}${emojis ? ' · '+esc(emojis) : ''}</span>
               </div>
               <button class="icon-btn-sm" data-remove-menu-item="${r.id}" type="button" title="Remove from menu">${icon('close')}</button>
             </li>
           `;
         }).join('')}
       </ul>
-    ` : `
-      <div class="shop-empty">
-        <p>Tap the + on any recipe to add it to this week's menu.</p>
-      </div>
-    `}
+    </li>
   `;
 }
+
+
 
 function shoppingHTML(){
   const selected = state.recipes.filter(r => state.selection.includes(r.id));
@@ -2196,6 +2399,13 @@ function bindEvents(){
     el.addEventListener('click', () => { activeSeasonFilter = el.dataset.seasonFilter; render(); });
   });
 
+  app.querySelectorAll('[data-label-filter]').forEach(el => {
+    el.addEventListener('click', () => {
+      activeLabelFilter = activeLabelFilter === el.dataset.labelFilter ? 'all' : el.dataset.labelFilter;
+      render();
+    });
+  });
+
   const cuisineFilterSelect = document.getElementById('cuisine-filter-select');
   if(cuisineFilterSelect) cuisineFilterSelect.addEventListener('change', () => {
     activeCuisineFilter = cuisineFilterSelect.value;
@@ -2206,6 +2416,7 @@ function bindEvents(){
   if(btnClearFilters) btnClearFilters.addEventListener('click', () => {
     activeSeasonFilter = 'all';
     activeCuisineFilter = 'all';
+    activeLabelFilter = 'all';
     render();
   });
 
@@ -2229,11 +2440,12 @@ function bindEvents(){
     formIngredients = [{name:'',amount:'',unit:''}];
     formCondiments = [{name:'',amount:'',unit:''}];
     formTitle = '';
-    formCategory = activeTab;
+    formCategory = CATEGORIES.some(c=>c.id===activeTab) ? activeTab : CATEGORIES[0].id;
     formServings = 2;
     formInstructions = '';
     formCuisine = '';
     formSeason = '';
+    formLabels = [];
     cuisineAddMode = false;
     cuisineNewValue = '';
     manageCuisineNewValue = '';
@@ -2253,7 +2465,15 @@ function bindEvents(){
   });
 
   const btnMenu = document.getElementById('btn-menu');
-  if(btnMenu) btnMenu.addEventListener('click', () => { sheet = 'menu'; render(); });
+  if(btnMenu) btnMenu.addEventListener('click', () => {
+    menuCheckedIds = [];
+    groupNamePrompt = false;
+    groupNameValue = '';
+    renameGroupId = null;
+    renameGroupValue = '';
+    sheet = 'menu';
+    render();
+  });
 
   const btnOpenBackup = document.getElementById('btn-open-backup');
   if(btnOpenBackup) btnOpenBackup.addEventListener('click', () => {
@@ -2345,6 +2565,7 @@ function bindEvents(){
     formServings = Number(r.servings) > 0 ? Number(r.servings) : 2;
     formCuisine = r.cuisine || '';
     formSeason = r.season || '';
+    formLabels = [...(r.labels || [])];
     cuisineAddMode = false;
     cuisineNewValue = '';
     manageCuisineNewValue = '';
@@ -2401,6 +2622,8 @@ function bindEvents(){
     const hadSourceImage = deletedRecipe?.hasSourceImage;
     state.recipes = state.recipes.filter(x=>x.id!==deletedId);
     state.selection = state.selection.filter(id=>id!==deletedId);
+    state.menuGroups.forEach(g => { g.recipeIds = g.recipeIds.filter(id => id !== deletedId); });
+    state.menuGroups = state.menuGroups.filter(g => g.recipeIds.length >= 2);
     saveData();
     sheet = null;
     viewingId = null;
@@ -2417,6 +2640,93 @@ function bindEvents(){
 
   const btnToList = document.getElementById('btn-to-list');
   if(btnToList) btnToList.addEventListener('click', () => toggleSelection(viewingId));
+
+  app.querySelectorAll('[data-menu-check]').forEach(el => {
+    el.addEventListener('change', () => {
+      const id = el.dataset.menuCheck;
+      if(el.checked){
+        if(!menuCheckedIds.includes(id)) menuCheckedIds.push(id);
+      } else {
+        menuCheckedIds = menuCheckedIds.filter(x => x !== id);
+      }
+      render();
+    });
+  });
+
+  const btnStartGroup = document.getElementById('btn-start-group');
+  if(btnStartGroup) btnStartGroup.addEventListener('click', () => {
+    groupNamePrompt = true;
+    groupNameValue = '';
+    render();
+  });
+
+  const fGroupName = document.getElementById('f-group-name');
+  if(fGroupName) fGroupName.addEventListener('input', () => { groupNameValue = fGroupName.value; });
+
+  const btnConfirmGroup = document.getElementById('btn-confirm-group');
+  if(btnConfirmGroup) btnConfirmGroup.addEventListener('click', () => {
+    const name = (groupNameValue || '').trim();
+    if(!name){
+      const el = document.getElementById('f-group-name');
+      if(el) el.focus();
+      return;
+    }
+    state.menuGroups.push({ id: uid(), name, recipeIds: [...menuCheckedIds] });
+    saveData();
+    menuCheckedIds = [];
+    groupNamePrompt = false;
+    groupNameValue = '';
+    render();
+  });
+
+  const btnCancelGroup = document.getElementById('btn-cancel-group');
+  if(btnCancelGroup) btnCancelGroup.addEventListener('click', () => {
+    groupNamePrompt = false;
+    groupNameValue = '';
+    render();
+  });
+
+  app.querySelectorAll('[data-ungroup]').forEach(el => {
+    el.addEventListener('click', () => {
+      state.menuGroups = state.menuGroups.filter(g => g.id !== el.dataset.ungroup);
+      saveData();
+      render();
+    });
+  });
+
+  app.querySelectorAll('[data-edit-group]').forEach(el => {
+    el.addEventListener('click', () => {
+      const g = state.menuGroups.find(x => x.id === el.dataset.editGroup);
+      if(!g) return;
+      renameGroupId = g.id;
+      renameGroupValue = g.name;
+      render();
+    });
+  });
+
+  const fRenameGroupInput = document.getElementById('f-rename-group-input');
+  if(fRenameGroupInput) fRenameGroupInput.addEventListener('input', () => { renameGroupValue = fRenameGroupInput.value; });
+
+  app.querySelectorAll('[data-confirm-rename-group]').forEach(el => {
+    el.addEventListener('click', () => {
+      const g = state.menuGroups.find(x => x.id === el.dataset.confirmRenameGroup);
+      if(g){
+        const name = (renameGroupValue || '').trim();
+        if(name) g.name = name;
+        saveData();
+      }
+      renameGroupId = null;
+      renameGroupValue = '';
+      render();
+    });
+  });
+
+  const btnCancelRenameGroup = document.getElementById('btn-cancel-rename-group');
+  if(btnCancelRenameGroup) btnCancelRenameGroup.addEventListener('click', () => {
+    renameGroupId = null;
+    renameGroupValue = '';
+    render();
+  });
 
   app.querySelectorAll('[data-serv]').forEach(el => {
     el.addEventListener('click', () => {
@@ -2637,6 +2947,15 @@ function bindEvents(){
   const fSeason = document.getElementById('f-season');
   if(fSeason) fSeason.addEventListener('change', () => { formSeason = fSeason.value; });
 
+  app.querySelectorAll('[data-toggle-label]').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.toggleLabel;
+      if(formLabels.includes(id)) formLabels = formLabels.filter(x => x !== id);
+      else formLabels.push(id);
+      render();
+    });
+  });
+
   const fInstructions = document.getElementById('f-instructions');
   if(fInstructions) fInstructions.addEventListener('input', () => { formInstructions = fInstructions.value; });
 
@@ -2707,6 +3026,7 @@ function bindEvents(){
   if(btnClearList) btnClearList.addEventListener('click', () => {
     state.selection = [];
     state.checked = {};
+    state.menuGroups = [];
     saveData();
     render();
   });
@@ -2747,6 +3067,7 @@ async function exportBackup(){
       exportedAt: new Date().toISOString(),
       recipes: state.recipes,
       customCuisines: state.customCuisines,
+      menuGroups: state.menuGroups,
       images,
       sourceImages,
     };
@@ -2777,6 +3098,7 @@ async function restoreBackup(){
 
     state.recipes = payload.recipes || [];
     state.customCuisines = payload.customCuisines || [];
+    state.menuGroups = payload.menuGroups || [];
     state.selection = [];
     state.checked = {};
     imageCache = {};
@@ -2849,6 +3171,7 @@ async function saveRecipe(){
   const instructions = (formInstructions||'').trim();
   const cuisine = (formCuisine||'').trim();
   const season = SEASONS.some(s => s.id === formSeason) ? formSeason : '';
+  const labels = LABELS.filter(l => formLabels.includes(l.id)).map(l => l.id);
   const ingredients = [
     ...formIngredients.map(i => ({ name:(i.name||'').trim(), amount:(i.amount||'').trim(), unit:(i.unit||'').trim(), kind:'ingredient' })),
     ...formCondiments.map(i => ({ name:(i.name||'').trim(), amount:(i.amount||'').trim(), unit:(i.unit||'').trim(), kind:'condiment' })),
@@ -2861,10 +3184,10 @@ async function saveRecipe(){
 
   if(editingId){
     const r = state.recipes.find(x=>x.id===editingId);
-    Object.assign(r, { title, category, servings, instructions, ingredients, hasImage, sourceUrl, hasSourceImage, cuisine, season });
+    Object.assign(r, { title, category, servings, instructions, ingredients, hasImage, sourceUrl, hasSourceImage, cuisine, season, labels });
   } else {
     id = uid();
-    state.recipes.push({ id, title, category, servings, instructions, ingredients, hasImage, sourceUrl, hasSourceImage, cuisine, season });
+    state.recipes.push({ id, title, category, servings, instructions, ingredients, hasImage, sourceUrl, hasSourceImage, cuisine, season, labels });
   }
 
   sheet = null;
